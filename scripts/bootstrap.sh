@@ -222,6 +222,12 @@ nodes:
       - containerPort: 443
         hostPort: 443
         protocol: TCP
+      - containerPort: 30000
+        hostPort: 3000
+        protocol: TCP
+      - containerPort: 30090
+        hostPort: 9090
+        protocol: TCP
   - role: worker
   - role: worker
 EOF
