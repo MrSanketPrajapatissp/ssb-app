@@ -193,3 +193,7 @@ strategy:
 
 # -- Termination grace period — allows in-flight requests to complete.
 terminationGracePeriodSeconds: 30
+
+# -- ServiceMonitor configuration for Prometheus Operator.
+serviceMonitor:
+  enabled: true
