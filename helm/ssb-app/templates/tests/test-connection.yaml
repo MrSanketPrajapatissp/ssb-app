@@ -26,6 +26,9 @@ spec:
         capabilities:
           drop:
             - ALL
+      volumeMounts:
+        - name: tmp
+          mountPath: /tmp
       command:
         - sh
         - -c
@@ -41,3 +44,6 @@ spec:
           wget -qO- http://{{ include "ssb-app.fullname" . }}:{{ .Values.service.port }}/metrics | head -5
           echo ""
           echo "[test] All checks passed."
+  volumes:
+    - name: tmp
+      emptyDir: {}

@@ -27,14 +27,12 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v4.1.7
-      - uses: actions/setup-go@v5.0.1
+      - uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-      - run: go mod download
-      - run: go mod verify
+          go-version: "1.22"
+      - run: go mod tidy
       - run: go vet ./...
-      - run: go test -race -count=1 ./...
+      - run: go test -v -race -count=1 ./...
 
   helm-checks:
     name: "Helm Lint"

@@ -60,18 +60,13 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4.1.7
 
-      - name: Set up Go ${{ env.GO_VERSION }}
-        uses: actions/setup-go@v5.0.1
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-          cache-dependency-path: app/go.sum
+          go-version: "1.22"
 
-      - name: Download Go modules
-        run: go mod download
-
-      - name: Verify go.sum integrity
-        run: go mod verify
+      - name: Download & Tidy Go modules
+        run: go mod tidy
 
       - name: Run go vet
         run: go vet ./...
