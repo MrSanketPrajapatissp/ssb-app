@@ -97,7 +97,7 @@ install_docker() {
   else
     log_info "Installing Docker..."
     if command -v dnf &>/dev/null; then
-      sudo dnf install -y docker
+      sudo dnf install -y --allowerasing docker || sudo dnf install -y docker
     elif command -v apt-get &>/dev/null; then
       sudo apt-get update && sudo apt-get install -y docker.io
     fi
