@@ -13,8 +13,8 @@ RUN addgroup -g 10001 appgroup && \
 WORKDIR /build
 
 # Cache dependency downloads separately from source code changes.
-COPY go.mod go.sum ./
-RUN go mod download && go mod verify
+COPY go.mod ./
+RUN go mod tidy
 
 # Copy source and build a statically linked binary.
 COPY . .
