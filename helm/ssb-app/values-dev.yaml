@@ -13,7 +13,7 @@ ingress:
   enabled: true
   className: "nginx"
   hosts:
-    - host: ssb-app.dev.local
+    - host: ""
       paths:
         - path: /
           pathType: Prefix
