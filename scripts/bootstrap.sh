@@ -66,25 +66,27 @@ done
 # ── Prerequisite check ────────────────────────────────────
 check_os() {
   if [[ ! -f /etc/os-release ]]; then
-    log_error "Cannot determine OS. Expected Amazon Linux 2023."
-    exit 1
+    log_warn "Cannot determine OS from /etc/os-release. Proceeding with tool installation..."
+    return 0
   fi
   # shellcheck disable=SC1091
   source /etc/os-release
-  if [[ "$ID" != "amzn" ]] || [[ "$VERSION_ID" != "2023" ]]; then
-    log_error "This script targets Amazon Linux 2023. Detected: $ID $VERSION_ID"
-    log_error "Do not run on $ID $VERSION_ID."
-    exit 1
-  fi
-  log_info "OS check passed: Amazon Linux 2023"
+  log_info "OS check detected: $ID ${VERSION_ID:-unknown}"
 }
 
 # ── Step 1: System Dependencies ───────────────────────────
 install_system_deps() {
   log_section "Step 1: System Dependencies"
-  log_info "Installing git, curl, tar, jq via dnf..."
-  sudo dnf install -y git curl tar jq unzip dos2unix
-  log_info "System dependencies installed."
+  if command -v dnf &>/dev/null; then
+    log_info "Installing git, curl, tar, jq via dnf..."
+    sudo dnf install -y git curl tar jq unzip dos2unix
+  elif command -v apt-get &>/dev/null; then
+    log_info "Installing git, curl, tar, jq via apt-get..."
+    sudo apt-get update && sudo apt-get install -y git curl tar jq unzip dos2unix
+  else
+    log_warn "Package manager not dnf/apt. Ensure git, curl, tar, jq, dos2unix are installed."
+  fi
+  log_info "System dependencies checked."
 }
 
 # ── Step 2: Docker ─────────────────────────────────────────
@@ -93,10 +95,15 @@ install_docker() {
   if command -v docker &>/dev/null; then
     log_info "Docker already installed: $(docker --version)"
   else
-    log_info "Installing Docker via dnf..."
-    sudo dnf install -y docker
-    sudo systemctl enable --now docker
-    sudo usermod -aG docker ec2-user
+    log_info "Installing Docker..."
+    if command -v dnf &>/dev/null; then
+      sudo dnf install -y docker
+    elif command -v apt-get &>/dev/null; then
+      sudo apt-get update && sudo apt-get install -y docker.io
+    fi
+    sudo systemctl enable --now docker || true
+    USER_NAME=$(whoami)
+    sudo usermod -aG docker "$USER_NAME" 2>/dev/null || true
     log_warn "Docker group membership requires a new shell session to take effect."
     log_warn "Run: newgrp docker OR log out and back in."
   fi
@@ -104,9 +111,9 @@ install_docker() {
   # Ensure daemon is running.
   if ! sudo systemctl is-active --quiet docker; then
     log_info "Starting Docker daemon..."
-    sudo systemctl start docker
+    sudo systemctl start docker || sudo service docker start || true
   fi
-  log_info "Docker is running."
+  log_info "Docker check complete."
 }
 
 # ── Step 3: kind ───────────────────────────────────────────

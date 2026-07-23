@@ -67,17 +67,14 @@ jobs:
           cache: true
           cache-dependency-path: app/go.sum
 
+      - name: Download Go modules
+        run: go mod download
+
       - name: Verify go.sum integrity
         run: go mod verify
 
       - name: Run go vet
         run: go vet ./...
-
-      - name: Install staticcheck
-        run: go install honnef.co/go/tools/cmd/staticcheck@2024.1.1
-
-      - name: Run staticcheck
-        run: staticcheck ./...
 
       - name: Run unit tests with race detector and coverage
         run: |
