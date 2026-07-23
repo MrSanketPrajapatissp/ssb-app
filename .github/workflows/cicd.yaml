@@ -66,8 +66,10 @@ jobs:
           go-version: "1.22"
           cache: false
 
-      - name: Download & Tidy Go modules
-        run: go mod tidy
+      - name: Sync & Regenerate Go modules
+        run: |
+          rm -f go.sum
+          go mod tidy
 
       - name: Run go vet
         run: go vet ./...
