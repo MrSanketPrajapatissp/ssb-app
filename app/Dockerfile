@@ -12,12 +12,9 @@ RUN addgroup -g 10001 appgroup && \
 
 WORKDIR /build
 
-# Cache dependency downloads separately from source code changes.
-COPY go.mod ./
-RUN go mod tidy
-
-# Copy source and build a statically linked binary.
+# Copy source files and regenerate clean module dependencies.
 COPY . .
+RUN rm -f go.sum && go mod tidy
 
 # Build flags:
 #   -trimpath         removes local file paths from binary (security)
