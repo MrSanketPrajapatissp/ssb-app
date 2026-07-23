@@ -40,7 +40,8 @@ concurrency:
 env:
   # Container registry. Defaults to GitHub Container Registry (ghcr.io) for GitHub Actions.
   REGISTRY: ${{ secrets.REGISTRY || 'ghcr.io' }}
-  IMAGE_NAME: ${{ github.repository }}
+  # Image reference name MUST be strictly lowercase for OCI/Docker specs.
+  IMAGE_NAME: mrsanketprajapatissp/ssb-app
   # Helm chart path.
   CHART_PATH: helm/ssb-app
   # Go version pinned explicitly.
