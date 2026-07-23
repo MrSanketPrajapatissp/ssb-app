@@ -277,19 +277,24 @@ jobs:
           version: "v3.15.2"
 
       - name: Configure kubeconfig (dev cluster)
+        id: kubeconfig
         run: |
           if [ -z "${{ secrets.KUBECONFIG_DEV }}" ]; then
             echo "::notice::KUBECONFIG_DEV secret is not set in GitHub settings. Skipping live cluster deployment."
-            exit 0
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            mkdir -p ~/.kube
+            echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > ~/.kube/config
+            chmod 600 ~/.kube/config
+            echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
-          mkdir -p ~/.kube
-          echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > ~/.kube/config
-          chmod 600 ~/.kube/config
 
       - name: Ensure dev namespace exists
+        if: steps.kubeconfig.outputs.configured == 'true'
         run: kubectl get ns dev || kubectl create ns dev
 
       - name: Deploy to dev via Helm
+        if: steps.kubeconfig.outputs.configured == 'true'
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
           helm upgrade --install ssb-app-dev ${{ env.CHART_PATH }} \
@@ -304,6 +309,7 @@ jobs:
             --history-max 10
 
       - name: Verify deployment rollout
+        if: steps.kubeconfig.outputs.configured == 'true'
         run: |
           kubectl rollout status deployment/ssb-app-dev \
             --namespace dev \
@@ -321,20 +327,25 @@ jobs:
         uses: actions/checkout@v4.1.7
 
       - name: Configure kubeconfig (dev cluster)
+        id: kubeconfig
         run: |
           if [ -z "${{ secrets.KUBECONFIG_DEV }}" ]; then
             echo "::notice::KUBECONFIG_DEV secret is not set in GitHub settings. Skipping smoke test."
-            exit 0
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            mkdir -p ~/.kube
+            echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > ~/.kube/config
+            chmod 600 ~/.kube/config
+            echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
-          mkdir -p ~/.kube
-          echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > ~/.kube/config
-          chmod 600 ~/.kube/config
 
       - name: Run Helm tests
+        if: steps.kubeconfig.outputs.configured == 'true'
         run: |
           helm test ssb-app-dev --namespace dev --timeout 60s
 
       - name: Smoke test via kubectl exec
+        if: steps.kubeconfig.outputs.configured == 'true'
         run: |
           POD=$(kubectl get pod -n dev -l app.kubernetes.io/name=ssb-app \
             -o jsonpath='{.items[0].metadata.name}')
@@ -396,16 +407,20 @@ jobs:
           version: "v3.15.2"
 
       - name: Configure kubeconfig (prod cluster)
+        id: kubeconfig
         run: |
           if [ -z "${{ secrets.KUBECONFIG_PROD }}" ]; then
             echo "::notice::KUBECONFIG_PROD secret is not set in GitHub settings. Skipping production deployment."
-            exit 0
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            mkdir -p ~/.kube
+            echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > ~/.kube/config
+            chmod 600 ~/.kube/config
+            echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
-          mkdir -p ~/.kube
-          echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > ~/.kube/config
-          chmod 600 ~/.kube/config
 
       - name: Record pre-deploy revision (for rollback)
+        if: steps.kubeconfig.outputs.configured == 'true'
         id: pre-deploy
         run: |
           REVISION=$(helm history ssb-app-prod --namespace prod \
@@ -414,6 +429,7 @@ jobs:
           echo "Pre-deploy Helm revision: ${REVISION}"
 
       - name: Deploy to prod via Helm
+        if: steps.kubeconfig.outputs.configured == 'true'
         id: deploy
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
@@ -429,7 +445,7 @@ jobs:
             --history-max 10
 
       - name: STAGE 11 — Automated rollback on failure
-        if: failure() && steps.deploy.conclusion == 'failure'
+        if: failure() && steps.deploy.conclusion == 'failure' && steps.kubeconfig.outputs.configured == 'true'
         run: |
           echo "::error::Deployment failed — initiating automated rollback"
           PREV_REVISION="${{ steps.pre-deploy.outputs.revision }}"
@@ -445,6 +461,7 @@ jobs:
           fi
 
       - name: Post-deploy smoke test (prod)
+        if: steps.kubeconfig.outputs.configured == 'true'
         run: |
           echo "Running prod smoke test..."
           kubectl run prod-smoke-test \
