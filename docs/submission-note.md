@@ -68,11 +68,27 @@
 - Actionable runbook for all alerts (docs/runbook.md)
 
 ### H. Automation + Resilience ✅
-- `scripts/bootstrap.sh` — full environment bootstrap (idempotent, 11-step)
+- `scripts/bootstrap.sh` — full environment bootstrap (idempotent, 11-step, supports AL2023 with DNF `--allowerasing` and Ubuntu/Debian)
 - `scripts/deploy-health-check.sh` — 8-point deployment health verifier
 - `scripts/failure-simulation.sh` — two failure scenarios with detection/recovery
 - `scripts/log-archival.sh` — log collection + compression + optional S3 upload
-- Failure simulation: bad image (helm atomic rollback) + manual rollback demonstration
+- **Evaluation Quick-Start for Evaluator/Recruiter**:
+  ```bash
+  # 1. Run environment bootstrap (sets up Kind, ArgoCD, Kyverno, Prometheus, Nginx)
+  bash scripts/bootstrap.sh
+
+  # 2. Build image and load into Kind cluster
+  docker build -t localhost:5001/ssb-app:git-$(git rev-parse --short HEAD) app/
+  kind load docker-image localhost:5001/ssb-app:git-$(git rev-parse --short HEAD) --name ssb-platform
+
+  # 3. Deploy via Helm
+  helm upgrade --install ssb-app-dev helm/ssb-app -n dev --create-namespace \
+    -f helm/ssb-app/values-dev.yaml \
+    --set image.tag=git-$(git rev-parse --short HEAD)
+
+  # 4. Verify 8-point health matrix
+  bash scripts/deploy-health-check.sh
+  ```
 
 ---
 
