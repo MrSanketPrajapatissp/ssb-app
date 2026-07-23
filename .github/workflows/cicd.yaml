@@ -114,7 +114,7 @@ jobs:
       - name: Compute image metadata and tags
         id: vars
         run: |
-          SHORT_SHA="${GITHUB_SHA::8}"
+          SHORT_SHA="${GITHUB_SHA::7}"
           echo "short-sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           # Immutable tag format: git-<sha>
           # Semver tag added automatically if pushed as v* tag.
@@ -291,7 +291,7 @@ jobs:
 
       - name: Deploy to dev via Helm
         run: |
-          SHORT_SHA="${GITHUB_SHA::8}"
+          SHORT_SHA="${GITHUB_SHA::7}"
           helm upgrade --install ssb-app-dev ${{ env.CHART_PATH }} \
             --namespace dev \
             --create-namespace \
@@ -416,7 +416,7 @@ jobs:
       - name: Deploy to prod via Helm
         id: deploy
         run: |
-          SHORT_SHA="${GITHUB_SHA::8}"
+          SHORT_SHA="${GITHUB_SHA::7}"
           helm upgrade --install ssb-app-prod ${{ env.CHART_PATH }} \
             --namespace prod \
             --create-namespace \
