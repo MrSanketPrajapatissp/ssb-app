@@ -55,10 +55,9 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
-          {{- with .Values.envFrom }}
           envFrom:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
+            - configMapRef:
+                name: {{ include "ssb-app.fullname" . }}-config
           {{- with .Values.env }}
           env:
             {{- toYaml . | nindent 12 }}
