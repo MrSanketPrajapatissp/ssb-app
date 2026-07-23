@@ -38,13 +38,13 @@ concurrency:
   cancel-in-progress: false  # Never cancel in-flight prod deploys.
 
 env:
-  # Image registry. Override in environment secrets for production ECR.
-  REGISTRY: ${{ secrets.REGISTRY || 'localhost:5001' }}
-  IMAGE_NAME: ssb-app
+  # Container registry. Defaults to GitHub Container Registry (ghcr.io) for GitHub Actions.
+  REGISTRY: ${{ secrets.REGISTRY || 'ghcr.io' }}
+  IMAGE_NAME: ${{ github.repository }}
   # Helm chart path.
   CHART_PATH: helm/ssb-app
   # Go version pinned explicitly.
-  GO_VERSION: "1.22.3"
+  GO_VERSION: "1.22"
 
 jobs:
   # ============================================================
@@ -64,6 +64,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.22"
+          cache: false
 
       - name: Download & Tidy Go modules
         run: go mod tidy
@@ -124,8 +125,8 @@ jobs:
         uses: docker/login-action@v3.2.0
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.REGISTRY_USER || '' }}
-          password: ${{ secrets.REGISTRY_PASSWORD || '' }}
+          username: ${{ secrets.REGISTRY_USER || github.actor }}
+          password: ${{ secrets.REGISTRY_PASSWORD || secrets.GITHUB_TOKEN }}
 
       - name: Extract Docker metadata
         id: meta
