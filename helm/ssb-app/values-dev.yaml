@@ -1,0 +1,42 @@
+# values-dev.yaml — Development environment overrides.
+# Local kind cluster; single replica; Ingress disabled; autoscaling off.
+
+replicaCount: 1
+
+image:
+  repository: localhost:5001/ssb-app
+  pullPolicy: Always
+  # Overridden by CI pipeline to the Git SHA tag.
+  tag: "dev-latest"
+
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: ssb-app.dev.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: "25m"
+    memory: "32Mi"
+  limits:
+    cpu: "100m"
+    memory: "64Mi"
+
+autoscaling:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: false
+
+config:
+  LOG_LEVEL: "debug"
+  APP_ENV: "dev"
+
+# No affinity constraints in dev — single-node kind cluster.
+affinity: {}
+topologySpreadConstraints: []

@@ -1,0 +1,85 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-non-root
+  annotations:
+    policies.kyverno.io/title: Require Non-Root Containers
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Running containers as root is a security risk. This policy requires all
+      containers to run as a non-root user with explicit UID >= 1000.
+      Also enforces read-only root filesystem and drops all Linux capabilities.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: check-runasnonroot
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [dev, staging, prod]
+      validate:
+        message: >-
+          Containers must set securityContext.runAsNonRoot=true and
+          securityContext.runAsUser >= 1000.
+        pattern:
+          spec:
+            securityContext:
+              runAsNonRoot: "true"
+            =(initContainers):
+              - securityContext:
+                  runAsNonRoot: "true"
+                  runAsUser: ">999"
+            containers:
+              - securityContext:
+                  runAsNonRoot: "true"
+                  runAsUser: ">999"
+
+    - name: check-readonly-rootfs
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [staging, prod]  # Enforced in staging+prod; audit in dev.
+      validate:
+        message: "Containers must set securityContext.readOnlyRootFilesystem=true."
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  readOnlyRootFilesystem: "true"
+
+    - name: disallow-privilege-escalation
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [dev, staging, prod]
+      validate:
+        message: "Containers must set allowPrivilegeEscalation=false."
+        pattern:
+          spec:
+            =(initContainers):
+              - securityContext:
+                  allowPrivilegeEscalation: "false"
+            containers:
+              - securityContext:
+                  allowPrivilegeEscalation: "false"
+
+    - name: drop-all-capabilities
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [staging, prod]
+      validate:
+        message: "Containers must drop ALL Linux capabilities."
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  capabilities:
+                    drop:
+                      - ALL

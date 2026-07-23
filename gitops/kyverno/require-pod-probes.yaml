@@ -1,0 +1,39 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-pod-probes
+  annotations:
+    policies.kyverno.io/title: Require Liveness and Readiness Probes
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      Liveness and readiness probes are essential for reliable Kubernetes deployments.
+      Without them, Kubernetes cannot detect unhealthy pods or control traffic routing.
+      This policy requires all Deployment containers to define both probes.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-probes-in-deployments
+      match:
+        any:
+          - resources:
+              kinds: [Deployment]
+              namespaces: [dev, staging, prod]
+      validate:
+        message: >-
+          All containers in Deployments must define both livenessProbe and readinessProbe.
+          Missing probes on containers: {{request.object.spec.template.spec.containers[].name}}
+        pattern:
+          spec:
+            template:
+              spec:
+                containers:
+                  - livenessProbe:
+                      httpGet:
+                        path: "?*"
+                        port: ">0"
+                    readinessProbe:
+                      httpGet:
+                        path: "?*"
+                        port: ">0"

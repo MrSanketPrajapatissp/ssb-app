@@ -1,0 +1,83 @@
+# =============================================================
+# gitops/kyverno/disallow-latest-tag.yaml
+# Kyverno policy: block any workload using image:latest tag.
+#
+# Kyverno Installation:
+#   helm repo add kyverno https://kyverno.github.io/kyverno/
+#   helm install kyverno kyverno/kyverno \
+#     --namespace kyverno \
+#     --create-namespace \
+#     --version 3.2.4 \
+#     --set admissionController.replicas=3 \
+#     --set backgroundController.replicas=2 \
+#     --wait
+#
+# Apply this policy:
+#   kubectl apply -f gitops/kyverno/
+#
+# Pattern source: kyverno/policies GitHub repository (official patterns).
+# =============================================================
+
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+  annotations:
+    policies.kyverno.io/title: Disallow Latest Tag
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      The ':latest' tag is mutable and can lead to unexpected changes in running workloads.
+      This policy disallows the use of 'latest' as an image tag, enforcing pinned
+      version references for all containers in Deployments, DaemonSets, and StatefulSets.
+      Exceptions are allowed for init containers in the kube-system namespace.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-image-tag
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - dev
+                - staging
+                - prod
+      validate:
+        message: >-
+          The image tag ':latest' is not allowed. Use a specific immutable tag
+          (e.g., git-abc1234 or v1.2.3). Found: {{request.object.spec.containers[].image}}
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ element.image }}"
+                    operator: Equals
+                    value: "*:latest"
+                  - key: "{{ element.image }}"
+                    operator: NotContains
+                    value: ":"
+
+    - name: require-image-tag-initcontainers
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - dev
+                - staging
+                - prod
+      validate:
+        message: "Init container images must use explicit tags."
+        foreach:
+          - list: "request.object.spec.initContainers"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ element.image }}"
+                    operator: Equals
+                    value: "*:latest"

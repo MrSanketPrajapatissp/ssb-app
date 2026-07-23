@@ -1,0 +1,9 @@
+project_name       = "ssb-digital"
+aws_region         = "ap-south-1"
+aws_account_id     = "123456789012"
+vpc_cidr           = "10.20.0.0/16"
+availability_zones = ["ap-south-1a", "ap-south-1b", "ap-south-1c"]
+kubernetes_version = "1.29"
+kms_key_arn        = "arn:aws:kms:ap-south-1:123456789012:key/mock-key-id-for-staging"
+github_org         = "ssb-digital"
+github_repo        = "ssb-app"

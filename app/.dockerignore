@@ -1,0 +1,24 @@
+# Exclude version control data
+.git
+.gitignore
+.github
+
+# Exclude test files from image — not needed at runtime
+*_test.go
+testdata/
+
+# Exclude local development artifacts
+*.log
+*.tmp
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Exclude CI and documentation
+.github/
+docs/
+
+# Exclude local build outputs that might exist during development
+ssb-app
+dist/

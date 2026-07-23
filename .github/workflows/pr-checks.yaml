@@ -1,0 +1,70 @@
+# pr-checks.yaml — Pull Request validation gate.
+# Runs on every PR to main. Must pass before merge is allowed.
+# Scope: lint + test + helm lint + Terraform validate only.
+# No image build or registry push on PRs.
+
+name: PR Checks
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true  # Cancel previous PR check if new commit is pushed.
+
+env:
+  GO_VERSION: "1.22.3"
+  CHART_PATH: helm/ssb-app
+
+jobs:
+  go-checks:
+    name: "Go Lint & Test"
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4.1.7
+      - uses: actions/setup-go@v5.0.1
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - run: go mod verify
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+
+  helm-checks:
+    name: "Helm Lint"
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4.1.7
+      - uses: azure/setup-helm@v4.2.0
+        with:
+          version: "v3.15.2"
+      - run: helm lint ${{ env.CHART_PATH }} --strict
+      - run: helm lint ${{ env.CHART_PATH }} -f ${{ env.CHART_PATH }}/values-dev.yaml --strict
+      - run: helm lint ${{ env.CHART_PATH }} -f ${{ env.CHART_PATH }}/values-staging.yaml --strict
+      - run: helm lint ${{ env.CHART_PATH }} -f ${{ env.CHART_PATH }}/values-prod.yaml --strict
+
+  terraform-checks:
+    name: "Terraform Validate"
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        environment: [dev, staging, prod]
+    steps:
+      - uses: actions/checkout@v4.1.7
+      - uses: hashicorp/setup-terraform@v3.1.1
+        with:
+          terraform_version: "1.8.4"
+      - name: Terraform init (dev — local backend for validate)
+        run: |
+          cd infra/environments/${{ matrix.environment }}
+          # Use local backend for PR validate to avoid S3 credentials requirement.
+          terraform init -backend=false
+      - name: Terraform validate
+        run: |
+          cd infra/environments/${{ matrix.environment }}
+          terraform validate

@@ -1,0 +1,195 @@
+# =============================================================
+# values.yaml — Default values for ssb-app Helm chart.
+# Override per environment in values-dev.yaml, values-staging.yaml,
+# values-prod.yaml. Secrets must NEVER be put here; use Secret refs.
+# =============================================================
+
+# -- Number of replicas. Overridden by HPA in staging/prod.
+replicaCount: 1
+
+image:
+  # -- Container image repository. Points to local registry in dev.
+  repository: localhost:5001/ssb-app
+  # -- Image pull policy. IfNotPresent is safest for pinned tags.
+  pullPolicy: IfNotPresent
+  # -- Image tag. MUST be overridden in CI with the Git SHA tag.
+  # Using "latest" here is intentional only as a chart default placeholder;
+  # pipelines must always inject a pinned tag.
+  tag: "latest"
+
+# -- Optional image pull secrets for private registries.
+imagePullSecrets: []
+
+# -- Override the chart name.
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Create a ServiceAccount for the pod.
+  create: true
+  # -- Annotations on the ServiceAccount (e.g., IRSA role annotation).
+  annotations: {}
+  # -- Name of the ServiceAccount. Defaults to release-name-chart-name.
+  name: ""
+  # -- Automount API credentials. false = least-privilege default.
+  automountServiceAccountToken: false
+
+# -- Annotations applied to the Pod spec (useful for Prometheus scraping, Vault injection, etc).
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"
+
+# -- Labels applied to all resources created by this chart.
+podLabels: {}
+
+# -- Pod-level security context. Drop all capabilities, run as non-root.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container-level security context.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+  runAsNonRoot: true
+  runAsUser: 65532
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+  # -- Annotations on the Service (useful for AWS NLB or cloud load balancers).
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    # Enable when cert-manager is present:
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: ssb-app.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # tls:
+  #   - secretName: ssb-app-tls
+  #     hosts:
+  #       - ssb-app.local
+
+# -- Container resource requests and limits.
+# Always set both — enables QoS class Burstable at minimum.
+resources:
+  requests:
+    cpu: "50m"
+    memory: "64Mi"
+  limits:
+    cpu: "200m"
+    memory: "128Mi"
+
+# -- Liveness probe — restarts pod if service is frozen.
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+  successThreshold: 1
+
+# -- Readiness probe — removes pod from Service endpoints until ready.
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8080
+  initialDelaySeconds: 3
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+  successThreshold: 1
+
+# -- HorizontalPodAutoscaler configuration.
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# -- PodDisruptionBudget — ensures availability during node drains.
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+  # maxUnavailable: 1
+
+# -- Additional environment variables from ConfigMap / Secret.
+envFrom:
+  - configMapRef:
+      name: ssb-app-config
+
+# -- Additional environment variables as literal key/value pairs.
+env:
+  - name: PORT
+    value: "8080"
+
+# -- Application configuration (rendered into a ConfigMap).
+config:
+  LOG_LEVEL: "info"
+  APP_ENV: "dev"
+
+# -- Topology spread constraints — spread pods across zones.
+topologySpreadConstraints: []
+# - maxSkew: 1
+#   topologyKey: topology.kubernetes.io/zone
+#   whenUnsatisfiable: DoNotSchedule
+#   labelSelector:
+#     matchLabels:
+#       app.kubernetes.io/name: ssb-app
+
+# -- Node selector for targeting specific nodes.
+nodeSelector: {}
+
+# -- Tolerations for tainted nodes.
+tolerations: []
+
+# -- Affinity rules (prefer spreading pods across nodes).
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: ssb-app
+          topologyKey: kubernetes.io/hostname
+
+# -- Extra volumes to mount (e.g., for tmp in read-only rootfs).
+extraVolumes:
+  - name: tmp
+    emptyDir: {}
+
+# -- Extra volume mounts.
+extraVolumeMounts:
+  - name: tmp
+    mountPath: /tmp
+
+# -- Deployment strategy.
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+# -- Termination grace period — allows in-flight requests to complete.
+terminationGracePeriodSeconds: 30

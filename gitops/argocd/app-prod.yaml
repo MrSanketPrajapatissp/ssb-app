@@ -1,0 +1,57 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ssb-app-prod
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: ssb-app
+    env: prod
+  annotations:
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: ssb-prod-alerts
+    notifications.argoproj.io/subscribe.on-health-degraded.pagerduty: ssb-prod-oncall
+    notifications.argoproj.io/subscribe.on-deployed.slack: ssb-deployments
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: ssb-platform
+
+  source:
+    repoURL: https://github.com/ssb-digital/ssb-app.git
+    # Production: always deploy from a pinned semver tag.
+    # CI pipeline creates the git tag and updates this field via PR.
+    targetRevision: "v1.0.0"  # Updated by release automation.
+    path: helm/ssb-app
+    helm:
+      releaseName: ssb-app-prod
+      valueFiles:
+        - values.yaml
+        - values-prod.yaml
+      parameters:
+        - name: image.tag
+          value: "REPLACED_BY_CI_RELEASE_TAG"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: prod
+
+  syncPolicy:
+    # Production: sync is always manual — requires explicit approval in Argo CD.
+    # Rollback: use "argocd app rollback ssb-app-prod" or Argo CD UI.
+    automated: null
+
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+
+    retry:
+      limit: 1  # Only one retry in production — escalate on persistent failure.
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
+
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas  # Managed by HPA.

@@ -1,0 +1,90 @@
+# SLO definitions for ssb-app.
+# These are expressed as Prometheus recording rules.
+# For full SLO management, consider OpenSLO or Pyrra.
+#
+# SLO 1: Availability — 99.5% of requests succeed (non-5xx)
+# SLO 2: Latency — 95% of requests complete in < 200ms
+#
+# These are evaluated over a 30-day rolling window.
+#
+# ERROR BUDGET:
+#   Availability SLO 99.5% → 0.5% error budget = 3.65 hours/month of errors allowed.
+#   Latency SLO 95% < 200ms → 5% of requests may exceed 200ms.
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ssb-app-slo
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: ssb-app
+    release: kube-prometheus-stack
+    ssb.io/slo: "true"
+spec:
+  groups:
+    - name: ssb-app.slo.error-budget
+      interval: 60s
+      rules:
+        # Availability SLO: 99.5%
+        - record: ssb_app:slo_availability_target
+          expr: "0.995"
+
+        # Current error rate (inverse of availability).
+        - record: ssb_app:slo_error_rate_30d
+          expr: |
+            sum(increase(ssb_app_http_requests_total{status_code=~"5.."}[30d]))
+            /
+            sum(increase(ssb_app_http_requests_total[30d]))
+
+        # Remaining error budget (fraction of 0.005 remaining).
+        - record: ssb_app:slo_error_budget_remaining
+          expr: |
+            1 - (ssb_app:slo_error_rate_30d / (1 - ssb_app:slo_availability_target))
+
+        # Alert: Error budget burn rate > 14x (fast burn = page now).
+        # Rule: 14x burn rate over 1h consumes 2% of monthly budget.
+        - alert: SsbAppSLOFastBurn
+          expr: |
+            (
+              rate(ssb_app_http_requests_total{status_code=~"5.."}[1h])
+              /
+              rate(ssb_app_http_requests_total[1h])
+            ) > (14 * 0.005)
+          for: 5m
+          labels:
+            severity: critical
+            slo: availability
+          annotations:
+            summary: "ssb-app SLO fast burn — error budget at risk"
+            description: >-
+              ssb-app is burning error budget 14x faster than sustainable.
+              At this rate, the 30-day error budget will be exhausted in < 2 hours.
+            runbook_url: "https://github.com/ssb-digital/ssb-app/blob/main/docs/runbook.md"
+
+        # Latency SLO: 95% of requests < 200ms
+        - record: ssb_app:slo_latency_p95_target_seconds
+          expr: "0.2"
+
+        - record: ssb_app:slo_latency_p95_30d
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(ssb_app_http_request_duration_seconds_bucket[30d]))
+              by (le)
+            )
+
+        - alert: SsbAppSLOLatencyBreach
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(ssb_app_http_request_duration_seconds_bucket[1h]))
+              by (le)
+            ) > 0.2
+          for: 10m
+          labels:
+            severity: warning
+            slo: latency
+          annotations:
+            summary: "ssb-app latency SLO breach — P95 > 200ms"
+            description: >-
+              ssb-app P95 latency ({{ $value | humanizeDuration }}) has exceeded
+              the 200ms SLO threshold for 10 minutes.
+            runbook_url: "https://github.com/ssb-digital/ssb-app/blob/main/docs/runbook.md#alert-ssb-app-high-latency"

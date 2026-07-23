@@ -1,0 +1,216 @@
+{
+  "title": "SSB App — Service Dashboard",
+  "uid": "ssb-app-main",
+  "description": "SSB Digital ssb-app operational dashboard. Covers the four golden signals (latency, traffic, errors, saturation) plus deployment and pod health.",
+  "tags": ["ssb-app", "sre", "production"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(ssb_app_http_requests_total, namespace)",
+        "includeAll": true,
+        "multi": false,
+        "current": { "text": "dev", "value": "dev" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request Rate (RPS)",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "targets": [{
+        "expr": "sum(rate(ssb_app_http_requests_total{namespace=~\"$namespace\"}[5m]))",
+        "legendFormat": "RPS"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 500 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Error Rate (%)",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "targets": [{
+        "expr": "100 * sum(rate(ssb_app_http_requests_total{namespace=~\"$namespace\",status_code=~\"5..\"}[5m])) / sum(rate(ssb_app_http_requests_total{namespace=~\"$namespace\"}[5m]))",
+        "legendFormat": "Error %"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "P99 Latency (ms)",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "targets": [{
+        "expr": "1000 * histogram_quantile(0.99, sum(rate(ssb_app_http_request_duration_seconds_bucket{namespace=~\"$namespace\"}[5m])) by (le))",
+        "legendFormat": "P99 ms"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 200 },
+              { "color": "red", "value": 500 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Ready Pods",
+      "type": "stat",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "targets": [{
+        "expr": "sum(kube_pod_status_ready{namespace=~\"$namespace\",pod=~\"ssb-app.*\",condition=\"true\"})",
+        "legendFormat": "Ready"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "green", "value": 2 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Request Rate by Path",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "targets": [{
+        "expr": "sum(rate(ssb_app_http_requests_total{namespace=~\"$namespace\"}[5m])) by (path, status_code)",
+        "legendFormat": "{{path}} {{status_code}}"
+      }],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Latency Percentiles (P50/P95/P99)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "1000 * histogram_quantile(0.50, sum(rate(ssb_app_http_request_duration_seconds_bucket{namespace=~\"$namespace\"}[5m])) by (le))",
+          "legendFormat": "P50"
+        },
+        {
+          "expr": "1000 * histogram_quantile(0.95, sum(rate(ssb_app_http_request_duration_seconds_bucket{namespace=~\"$namespace\"}[5m])) by (le))",
+          "legendFormat": "P95"
+        },
+        {
+          "expr": "1000 * histogram_quantile(0.99, sum(rate(ssb_app_http_request_duration_seconds_bucket{namespace=~\"$namespace\"}[5m])) by (le))",
+          "legendFormat": "P99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ms" }
+      }
+    },
+    {
+      "id": 7,
+      "title": "CPU Usage by Pod",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "targets": [{
+        "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",pod=~\"ssb-app.*\",container!=\"\"}[5m])) by (pod)",
+        "legendFormat": "{{pod}}"
+      }],
+      "fieldConfig": { "defaults": { "unit": "cores" } }
+    },
+    {
+      "id": 8,
+      "title": "Memory Usage by Pod",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "targets": [{
+        "expr": "sum(container_memory_working_set_bytes{namespace=~\"$namespace\",pod=~\"ssb-app.*\",container!=\"\"}) by (pod)",
+        "legendFormat": "{{pod}}"
+      }],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    },
+    {
+      "id": 9,
+      "title": "Deployment Status",
+      "type": "table",
+      "gridPos": { "x": 0, "y": 20, "w": 24, "h": 6 },
+      "targets": [
+        {
+          "expr": "kube_deployment_status_replicas_ready{namespace=~\"$namespace\",deployment=~\"ssb-app.*\"}",
+          "legendFormat": "Ready",
+          "instant": true
+        },
+        {
+          "expr": "kube_deployment_spec_replicas{namespace=~\"$namespace\",deployment=~\"ssb-app.*\"}",
+          "legendFormat": "Desired",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "SLO Availability (99.5% target)",
+      "type": "gauge",
+      "gridPos": { "x": 0, "y": 26, "w": 12, "h": 6 },
+      "targets": [{
+        "expr": "100 * (1 - sum(increase(ssb_app_http_requests_total{namespace=~\"$namespace\",status_code=~\"5..\"}[30d])) / sum(increase(ssb_app_http_requests_total{namespace=~\"$namespace\"}[30d])))",
+        "legendFormat": "30d Availability %"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 99,
+          "max": 100,
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 99.5 },
+              { "color": "green", "value": 99.9 }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

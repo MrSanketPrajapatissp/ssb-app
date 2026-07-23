@@ -1,0 +1,60 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: ssb-platform
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: "SSB Digital platform project — scopes allowed repos, clusters, and namespaces."
+
+  # Restrict source repositories — only our repo can deploy.
+  sourceRepos:
+    - https://github.com/ssb-digital/ssb-app.git
+
+  # Restrict destinations — only known clusters and namespaces.
+  destinations:
+    - namespace: dev
+      server: https://kubernetes.default.svc
+    - namespace: staging
+      server: https://kubernetes.default.svc
+    - namespace: prod
+      server: https://kubernetes.default.svc
+    - namespace: argocd
+      server: https://kubernetes.default.svc
+    - namespace: monitoring
+      server: https://kubernetes.default.svc
+
+  # Restrict which cluster-scoped resources can be created.
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+
+  # Allow all namespaced resource types within destinations.
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+  # Deny direct cluster-admin operations.
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: ResourceQuota
+    - group: ""
+      kind: LimitRange
+
+  # RBAC — only sre and admin roles can sync prod.
+  roles:
+    - name: developer
+      description: "Developers can view and sync dev only."
+      policies:
+        - "p, proj:ssb-platform:developer, applications, get, ssb-platform/ssb-app-dev, allow"
+        - "p, proj:ssb-platform:developer, applications, sync, ssb-platform/ssb-app-dev, allow"
+      groups:
+        - ssb-developers
+
+    - name: sre
+      description: "SRE team — full access to all environments."
+      policies:
+        - "p, proj:ssb-platform:sre, applications, *, ssb-platform/*, allow"
+      groups:
+        - ssb-sre

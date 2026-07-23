@@ -1,0 +1,25 @@
+apiVersion: v2
+name: ssb-app
+description: >
+  Helm chart for SSB Digital's ssb-app — a minimal HTTP service exposing
+  /health, /ready, and /metrics endpoints. Designed for deployment across
+  dev, staging, and production environments on Kubernetes.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+home: https://github.com/ssb-digital/ssb-app
+sources:
+  - https://github.com/ssb-digital/ssb-app
+maintainers:
+  - name: SSB Digital SRE
+    email: sre@ssbdigital.com
+keywords:
+  - ssb
+  - http-service
+  - prometheus
+annotations:
+  # Artifact Hub annotations for chart discovery
+  artifacthub.io/changes: |
+    - kind: added
+      description: Initial chart release
+  artifacthub.io/license: Proprietary

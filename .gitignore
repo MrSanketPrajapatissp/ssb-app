@@ -1,0 +1,38 @@
+# Secrets and credentials — NEVER commit these
+.env
+*.pem
+*.key
+*.crt
+kubeconfig
+*.kubeconfig
+
+# Terraform state and working files
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfstate.lock.info
+.terraform.lock.hcl
+terraform.plan
+*.tfplan
+
+# Go build artifacts
+app/ssb-app
+app/dist/
+app/coverage.out
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Helm working files
+helm/**/*.lock
+
+# Log archives
+ssb-logs/
+
+# Docker build context leftovers
+*.tar.gz

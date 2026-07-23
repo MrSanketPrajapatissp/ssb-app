@@ -1,0 +1,170 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ssb-app-rules
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: ssb-app
+    release: kube-prometheus-stack
+spec:
+  groups:
+    # ==========================================================
+    # Group 1: SLO — Availability (error rate)
+    # SLO: 99.5% of requests succeed (status code != 5xx)
+    # Error budget: 0.5% over a 30-day rolling window
+    # ==========================================================
+    - name: ssb-app.slo.availability
+      interval: 30s
+      rules:
+        # Rate of all requests (per second).
+        - record: ssb_app:http_requests:rate5m
+          expr: |
+            sum(rate(ssb_app_http_requests_total[5m]))
+            by (namespace, path)
+
+        # Rate of 5xx errors (per second).
+        - record: ssb_app:http_errors:rate5m
+          expr: |
+            sum(rate(ssb_app_http_requests_total{status_code=~"5.."}[5m]))
+            by (namespace, path)
+
+        # Error ratio — used for SLO burn rate calculations.
+        - record: ssb_app:error_ratio:rate5m
+          expr: |
+            ssb_app:http_errors:rate5m
+            /
+            ssb_app:http_requests:rate5m
+
+        # Availability over 1h window.
+        - record: ssb_app:availability:ratio_1h
+          expr: |
+            1 - (
+              sum(increase(ssb_app_http_requests_total{status_code=~"5.."}[1h]))
+              /
+              sum(increase(ssb_app_http_requests_total[1h]))
+            )
+
+    # ==========================================================
+    # Group 2: SLO — Latency (P99 < 500ms)
+    # ==========================================================
+    - name: ssb-app.slo.latency
+      interval: 30s
+      rules:
+        - record: ssb_app:latency_p99:rate5m
+          expr: |
+            histogram_quantile(0.99,
+              sum(rate(ssb_app_http_request_duration_seconds_bucket[5m]))
+              by (le, namespace, path)
+            )
+
+        - record: ssb_app:latency_p95:rate5m
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(ssb_app_http_request_duration_seconds_bucket[5m]))
+              by (le, namespace, path)
+            )
+
+        - record: ssb_app:latency_p50:rate5m
+          expr: |
+            histogram_quantile(0.50,
+              sum(rate(ssb_app_http_request_duration_seconds_bucket[5m]))
+              by (le, namespace, path)
+            )
+
+    # ==========================================================
+    # Group 3: Alerts
+    # Alert 1: High error rate — fast burn (SLO threat)
+    # Alert 2: High P99 latency — degraded user experience
+    # ==========================================================
+    - name: ssb-app.alerts
+      rules:
+        # ALERT 1: Error rate exceeds 5% over 5 minutes.
+        # Severity: critical — pages on-call SRE immediately.
+        # Runbook: docs/runbook.md#alert-ssb-app-high-error-rate
+        - alert: SsbAppHighErrorRate
+          expr: |
+            (
+              sum(rate(ssb_app_http_requests_total{status_code=~"5.."}[5m]))
+              /
+              sum(rate(ssb_app_http_requests_total[5m]))
+            ) > 0.05
+          for: 2m
+          labels:
+            severity: critical
+            team: sre
+            service: ssb-app
+          annotations:
+            summary: "ssb-app error rate is above 5%"
+            description: >-
+              ssb-app in namespace {{ $labels.namespace }} has an error rate of
+              {{ $value | humanizePercentage }} over the last 5 minutes.
+              This exceeds the 0.5% SLO threshold by {{ $value | humanize }}x.
+              Check pod logs and recent deployments.
+            runbook_url: "https://github.com/ssb-digital/ssb-app/blob/main/docs/runbook.md#alert-ssb-app-high-error-rate"
+            dashboard_url: "http://grafana.monitoring.svc.cluster.local/d/ssb-app"
+
+        # ALERT 2: P99 latency exceeds 500ms.
+        # Severity: warning — notify SRE via Slack; no immediate page.
+        # Runbook: docs/runbook.md#alert-ssb-app-high-latency
+        - alert: SsbAppHighP99Latency
+          expr: |
+            histogram_quantile(0.99,
+              sum(rate(ssb_app_http_request_duration_seconds_bucket[5m]))
+              by (le, namespace, path)
+            ) > 0.5
+          for: 5m
+          labels:
+            severity: warning
+            team: sre
+            service: ssb-app
+          annotations:
+            summary: "ssb-app P99 latency exceeds 500ms"
+            description: >-
+              ssb-app P99 latency in namespace {{ $labels.namespace }} on path {{ $labels.path }}
+              is {{ $value | humanizeDuration }} over the last 5 minutes.
+              This violates the 500ms latency SLO.
+            runbook_url: "https://github.com/ssb-digital/ssb-app/blob/main/docs/runbook.md#alert-ssb-app-high-latency"
+
+        # ALERT 3: Pod is not ready (readiness probe failing).
+        - alert: SsbAppPodNotReady
+          expr: |
+            kube_pod_status_ready{
+              namespace=~"dev|staging|prod",
+              pod=~"ssb-app-.*",
+              condition="true"
+            } == 0
+          for: 3m
+          labels:
+            severity: warning
+            team: sre
+            service: ssb-app
+          annotations:
+            summary: "ssb-app pod {{ $labels.pod }} is not ready"
+            description: >-
+              Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has failed
+              its readiness probe for more than 3 minutes.
+            runbook_url: "https://github.com/ssb-digital/ssb-app/blob/main/docs/runbook.md#alert-ssb-app-pod-not-ready"
+
+        # ALERT 4: Deployment replica count below desired.
+        - alert: SsbAppReplicasMismatch
+          expr: |
+            kube_deployment_status_replicas_ready{
+              namespace=~"dev|staging|prod",
+              deployment=~"ssb-app.*"
+            }
+            <
+            kube_deployment_spec_replicas{
+              namespace=~"dev|staging|prod",
+              deployment=~"ssb-app.*"
+            }
+          for: 5m
+          labels:
+            severity: critical
+            team: sre
+            service: ssb-app
+          annotations:
+            summary: "ssb-app has fewer ready replicas than desired"
+            description: >-
+              Deployment {{ $labels.deployment }} in {{ $labels.namespace }} has
+              {{ $value }} ready replicas but desired more.
+            runbook_url: "https://github.com/ssb-digital/ssb-app/blob/main/docs/runbook.md#alert-ssb-app-replicas-mismatch"

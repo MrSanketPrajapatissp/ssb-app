@@ -1,0 +1,50 @@
+Thank you for installing {{ .Chart.Name }} v{{ .Chart.AppVersion }}!
+
+Release: {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+Environment: {{ .Values.config.APP_ENV }}
+
+=============================================================
+  SERVICE ENDPOINTS
+=============================================================
+{{- if .Values.ingress.enabled }}
+  Application URL:
+  {{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+  {{- end }}
+{{- else }}
+  Port-forward to access locally:
+  kubectl port-forward svc/{{ include "ssb-app.fullname" . }} 8080:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+
+  Then access:
+    Health:  http://localhost:8080/health
+    Ready:   http://localhost:8080/ready
+    Metrics: http://localhost:8080/metrics
+{{- end }}
+
+=============================================================
+  OPERATIONS
+=============================================================
+  Run Helm tests:
+    helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+  Check deployment status:
+    kubectl rollout status deployment/{{ include "ssb-app.fullname" . }} -n {{ .Release.Namespace }}
+
+  Rollback (if needed):
+    helm rollback {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+  View logs:
+    kubectl logs -l app.kubernetes.io/name={{ include "ssb-app.name" . }} -n {{ .Release.Namespace }} --tail=100
+
+=============================================================
+  MONITORING
+=============================================================
+  Prometheus scrape target:
+    Job: ssb-app
+    Endpoint: http://{{ include "ssb-app.fullname" . }}:{{ .Values.service.port }}/metrics
+
+  Key PromQL queries:
+    - Rate of requests:  rate(ssb_app_http_requests_total[5m])
+    - Error rate:        rate(ssb_app_http_requests_total{status_code=~"5.."}[5m])
+    - P99 latency:       histogram_quantile(0.99, rate(ssb_app_http_request_duration_seconds_bucket[5m]))

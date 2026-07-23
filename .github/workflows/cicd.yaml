@@ -1,0 +1,452 @@
+# =============================================================
+# .github/workflows/cicd.yaml
+# SSB Digital ssb-app — End-to-End CI/CD Pipeline
+#
+# Pipeline stages (in order):
+#   1. Lint & Test
+#   2. Build Image
+#   3. Vulnerability Scan (Trivy)
+#   4. SBOM Generation (Anchore Syft)
+#   5. Immutable Tagging (Git SHA + semver)
+#   6. Registry Push
+#   7. Helm Validation
+#   8. Deploy to dev (automatic)
+#   9. Manual Approval Gate (prod only)
+#  10. Smoke Test
+#  11. Automated Rollback on failure
+#
+# Local demo note: The registry push targets localhost:5001 (kind local registry).
+# In production, replace with ECR push steps authenticated via IRSA/OIDC.
+# =============================================================
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - "release/**"
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  pull_request:
+    branches:
+      - main
+
+# Prevent concurrent deployments to the same environment.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false  # Never cancel in-flight prod deploys.
+
+env:
+  # Image registry. Override in environment secrets for production ECR.
+  REGISTRY: ${{ secrets.REGISTRY || 'localhost:5001' }}
+  IMAGE_NAME: ssb-app
+  # Helm chart path.
+  CHART_PATH: helm/ssb-app
+  # Go version pinned explicitly.
+  GO_VERSION: "1.22.3"
+
+jobs:
+  # ============================================================
+  # STAGE 1: Lint & Test
+  # ============================================================
+  lint-test:
+    name: "1 · Lint & Test"
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4.1.7
+
+      - name: Set up Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v5.0.1
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: app/go.sum
+
+      - name: Verify go.sum integrity
+        run: go mod verify
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@2024.1.1
+
+      - name: Run staticcheck
+        run: staticcheck ./...
+
+      - name: Run unit tests with race detector and coverage
+        run: |
+          go test -race -coverprofile=coverage.out -covermode=atomic ./...
+          go tool cover -func=coverage.out
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4.3.4
+        with:
+          name: coverage-report
+          path: app/coverage.out
+          retention-days: 7
+
+  # ============================================================
+  # STAGE 2 + 3 + 4 + 5 + 6: Build → Scan → SBOM → Tag → Push
+  # ============================================================
+  build-push:
+    name: "2–6 · Build, Scan, SBOM, Tag, Push"
+    runs-on: ubuntu-22.04
+    needs: [lint-test]
+    # Only push images from main branch or version tags; not from PRs.
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+      # Required for OIDC token to authenticate with ECR in production.
+      id-token: write
+      # Required for Cosign signing attestations.
+      attestations: write
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+      short-sha: ${{ steps.vars.outputs.short-sha }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4.1.7
+
+      - name: Compute image metadata and tags
+        id: vars
+        run: |
+          SHORT_SHA="${GITHUB_SHA::8}"
+          echo "short-sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          # Immutable tag format: git-<sha>
+          # Semver tag added automatically if pushed as v* tag.
+          echo "image-tag-sha=git-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "build-time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3.3.0
+
+      - name: Log in to container registry
+        uses: docker/login-action@v3.2.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USER || '' }}
+          password: ${{ secrets.REGISTRY_PASSWORD || '' }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5.5.1
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # Git SHA tag (immutable reference for deployments)
+            type=sha,format=short,prefix=git-
+            # Semver tag when a v* git tag is pushed
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            # Branch name tag (mutable, only for non-prod promotion flows)
+            type=ref,event=branch
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6.4.1
+        with:
+          context: app/
+          file: app/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Build args inject version info into binary.
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ steps.vars.outputs.build-time }}
+          # Cache layers in GitHub Actions cache for faster rebuilds.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Enable provenance attestation (supply-chain hardening bonus).
+          provenance: true
+          sbom: true
+
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@0.23.0
+        with:
+          image-ref: "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:git-${{ steps.vars.outputs.short-sha }}"
+          format: "sarif"
+          output: "trivy-results.sarif"
+          # Fail on HIGH or CRITICAL vulnerabilities.
+          severity: "HIGH,CRITICAL"
+          # Ignore unfixed vulnerabilities — only block on patchable issues.
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Upload Trivy scan results
+        if: always()
+        uses: actions/upload-artifact@v4.3.4
+        with:
+          name: trivy-sarif
+          path: trivy-results.sarif
+          retention-days: 30
+
+      - name: Generate SBOM with Syft
+        uses: anchore/sbom-action@v0.17.0
+        with:
+          image: "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:git-${{ steps.vars.outputs.short-sha }}"
+          format: spdx-json
+          artifact-name: sbom-${{ steps.vars.outputs.short-sha }}.spdx.json
+
+      - name: Install Cosign for image signing
+        uses: sigstore/cosign-installer@v3.5.0
+
+      - name: Sign image with Cosign (keyless OIDC)
+        # DESIGN NOTE: In production, use --key for deterministic signing.
+        # For CI demo, keyless signing uses GitHub OIDC identity.
+        run: |
+          cosign sign --yes \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}"
+
+  # ============================================================
+  # STAGE 7: Helm Validation
+  # ============================================================
+  helm-validate:
+    name: "7 · Helm Validation"
+    runs-on: ubuntu-22.04
+    needs: [lint-test]
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4.1.7
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4.2.0
+        with:
+          version: "v3.15.2"
+
+      - name: Helm lint — default values
+        run: helm lint ${{ env.CHART_PATH }} --strict
+
+      - name: Helm lint — dev values
+        run: |
+          helm lint ${{ env.CHART_PATH }} \
+            -f ${{ env.CHART_PATH }}/values-dev.yaml \
+            --strict
+
+      - name: Helm lint — staging values
+        run: |
+          helm lint ${{ env.CHART_PATH }} \
+            -f ${{ env.CHART_PATH }}/values-staging.yaml \
+            --strict
+
+      - name: Helm lint — prod values
+        run: |
+          helm lint ${{ env.CHART_PATH }} \
+            -f ${{ env.CHART_PATH }}/values-prod.yaml \
+            --strict
+
+      - name: Helm template dry-run (dev)
+        run: |
+          helm template ssb-app-dev ${{ env.CHART_PATH }} \
+            -f ${{ env.CHART_PATH }}/values-dev.yaml \
+            --namespace dev \
+            --debug > /tmp/helm-dev-rendered.yaml
+          echo "Rendered dev manifests:"
+          cat /tmp/helm-dev-rendered.yaml | head -50
+
+      - name: Validate rendered manifests with kubeval
+        run: |
+          curl -sL https://github.com/instrumenta/kubeval/releases/download/v0.16.1/kubeval-linux-amd64.tar.gz | tar xz
+          ./kubeval /tmp/helm-dev-rendered.yaml --strict --kubernetes-version 1.29.0
+
+  # ============================================================
+  # STAGE 8: Deploy to dev (automatic on main branch push)
+  # ============================================================
+  deploy-dev:
+    name: "8 · Deploy to dev"
+    runs-on: ubuntu-22.04
+    needs: [build-push, helm-validate]
+    environment:
+      name: dev
+      url: http://ssb-app.dev.local
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4.1.7
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4.0.0
+        with:
+          version: "v1.29.4"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4.2.0
+        with:
+          version: "v3.15.2"
+
+      - name: Configure kubeconfig (dev cluster)
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Ensure dev namespace exists
+        run: kubectl get ns dev || kubectl create ns dev
+
+      - name: Deploy to dev via Helm
+        run: |
+          SHORT_SHA="${GITHUB_SHA::8}"
+          helm upgrade --install ssb-app-dev ${{ env.CHART_PATH }} \
+            --namespace dev \
+            --create-namespace \
+            -f ${{ env.CHART_PATH }}/values-dev.yaml \
+            --set image.tag="git-${SHORT_SHA}" \
+            --set image.repository="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" \
+            --atomic \
+            --timeout 120s \
+            --wait \
+            --history-max 10
+
+      - name: Verify deployment rollout
+        run: |
+          kubectl rollout status deployment/ssb-app-dev \
+            --namespace dev \
+            --timeout=90s
+
+  # ============================================================
+  # STAGE 10: Smoke Test (dev)
+  # ============================================================
+  smoke-test-dev:
+    name: "10 · Smoke Test (dev)"
+    runs-on: ubuntu-22.04
+    needs: [deploy-dev]
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4.1.7
+
+      - name: Configure kubeconfig (dev cluster)
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Run Helm tests
+        run: |
+          helm test ssb-app-dev --namespace dev --timeout 60s
+
+      - name: Smoke test via kubectl exec
+        run: |
+          POD=$(kubectl get pod -n dev -l app.kubernetes.io/name=ssb-app \
+            -o jsonpath='{.items[0].metadata.name}')
+          echo "Testing pod: ${POD}"
+          kubectl exec "${POD}" -n dev -- /app/ssb-app &
+          sleep 2
+
+          # Test /health from inside the cluster.
+          kubectl run smoke-test --image=curlimages/curl:8.8.0 \
+            --restart=Never \
+            --namespace=dev \
+            --rm -it \
+            --command -- sh -c '
+              curl -sf http://ssb-app-dev/health && echo "HEALTH OK" &&
+              curl -sf http://ssb-app-dev/ready  && echo "READY OK"  &&
+              curl -sf http://ssb-app-dev/metrics | grep ssb_app_http_requests_total && echo "METRICS OK"
+            '
+
+  # ============================================================
+  # STAGE 9: Manual Approval Gate (prod only)
+  # ============================================================
+  approve-prod:
+    name: "9 · Manual Approval Gate (prod)"
+    runs-on: ubuntu-22.04
+    needs: [smoke-test-dev]
+    # Only run on main branch after smoke test passes.
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: prod-approval
+    steps:
+      - name: Approval checkpoint
+        run: |
+          echo "Production deployment approved by: ${{ github.actor }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  # ============================================================
+  # Deploy to prod (post approval) with rollback on failure
+  # ============================================================
+  deploy-prod:
+    name: "Deploy to prod (with rollback)"
+    runs-on: ubuntu-22.04
+    needs: [approve-prod]
+    environment:
+      name: prod
+      url: https://ssb-app.ssbdigital.com
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4.1.7
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4.0.0
+        with:
+          version: "v1.29.4"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4.2.0
+        with:
+          version: "v3.15.2"
+
+      - name: Configure kubeconfig (prod cluster)
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Record pre-deploy revision (for rollback)
+        id: pre-deploy
+        run: |
+          REVISION=$(helm history ssb-app-prod --namespace prod \
+            --max 1 -o json 2>/dev/null | jq -r '.[0].revision // "0"')
+          echo "revision=${REVISION}" >> "$GITHUB_OUTPUT"
+          echo "Pre-deploy Helm revision: ${REVISION}"
+
+      - name: Deploy to prod via Helm
+        id: deploy
+        run: |
+          SHORT_SHA="${GITHUB_SHA::8}"
+          helm upgrade --install ssb-app-prod ${{ env.CHART_PATH }} \
+            --namespace prod \
+            --create-namespace \
+            -f ${{ env.CHART_PATH }}/values-prod.yaml \
+            --set image.tag="git-${SHORT_SHA}" \
+            --set image.repository="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" \
+            --atomic \
+            --timeout 300s \
+            --wait \
+            --history-max 10
+
+      - name: STAGE 11 — Automated rollback on failure
+        if: failure() && steps.deploy.conclusion == 'failure'
+        run: |
+          echo "::error::Deployment failed — initiating automated rollback"
+          PREV_REVISION="${{ steps.pre-deploy.outputs.revision }}"
+          if [ "${PREV_REVISION}" != "0" ]; then
+            helm rollback ssb-app-prod "${PREV_REVISION}" \
+              --namespace prod \
+              --wait \
+              --timeout 120s
+            echo "::notice::Rollback to revision ${PREV_REVISION} completed"
+          else
+            echo "::warning::No previous revision found; running helm uninstall"
+            helm uninstall ssb-app-prod --namespace prod
+          fi
+
+      - name: Post-deploy smoke test (prod)
+        run: |
+          echo "Running prod smoke test..."
+          kubectl run prod-smoke-test \
+            --image=curlimages/curl:8.8.0 \
+            --restart=Never \
+            --namespace=prod \
+            --rm -it \
+            --command -- sh -c '
+              curl -sf http://ssb-app-prod.prod.svc.cluster.local/health && echo "PROD HEALTH OK" &&
+              curl -sf http://ssb-app-prod.prod.svc.cluster.local/ready  && echo "PROD READY OK"
+            '

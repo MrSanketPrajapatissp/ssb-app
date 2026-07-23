@@ -1,0 +1,68 @@
+# values-prod.yaml — Production environment overrides.
+# High-availability; strict PDB; HPA; enforced TLS; production logging.
+# NEVER use local registry in production — use ECR or equivalent.
+
+replicaCount: 3
+
+image:
+  # Production: use ECR URI with IAM-authenticated pull.
+  # DESIGN-ONLY: Replace with actual ECR URI before production deployment.
+  repository: 123456789012.dkr.ecr.ap-south-1.amazonaws.com/ssb-app
+  pullPolicy: IfNotPresent
+  # MUST be overridden by CI pipeline. Never deploy with "latest" in production.
+  tag: "REPLACE_WITH_GIT_SHA"
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: ssb-app.ssbdigital.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: ssb-app-prod-tls
+      hosts:
+        - ssb-app.ssbdigital.com
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "256Mi"
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 60
+  targetMemoryUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  # At least 2 pods must be available at all times; allow one unavailable.
+  minAvailable: 2
+
+config:
+  LOG_LEVEL: "warn"
+  APP_ENV: "prod"
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: ssb-app
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: ssb-app

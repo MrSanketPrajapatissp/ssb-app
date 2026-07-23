@@ -1,0 +1,32 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ssb-app
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: ssb-app
+    # This label must match the Prometheus selector in kube-prometheus-stack.
+    release: kube-prometheus-stack
+spec:
+  # Select Services in both dev and staging namespaces.
+  namespaceSelector:
+    matchNames:
+      - dev
+      - staging
+      - prod
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ssb-app
+
+  endpoints:
+    - port: http
+      path: /metrics
+      scheme: http
+      interval: 15s
+      scrapeTimeout: 10s
+      # Honor the ssb_app_* metric naming (no relabeling needed).
+      metricRelabelings:
+        # Drop high-cardinality debug metrics to reduce storage cost.
+        - sourceLabels: [__name__]
+          regex: "go_gc_.*"
+          action: drop

@@ -1,0 +1,91 @@
+# =============================================================
+# gitops/argocd/app-dev.yaml
+# Argo CD Application manifest for the dev environment.
+#
+# Argo CD Installation (run once on the cluster):
+#   kubectl create namespace argocd
+#   helm repo add argo https://argoproj.github.io/argo-helm
+#   helm install argocd argo/argo-cd \
+#     --namespace argocd \
+#     --version 7.3.4 \
+#     --set server.insecure=true \
+#     --wait
+#
+# This manifest is then applied:
+#   kubectl apply -f gitops/argocd/app-dev.yaml -n argocd
+#
+# Progressive Delivery Strategy: Rolling Updates
+# Rationale: For a government-facing platform, rolling updates provide:
+#   1. Zero-downtime deployments (maxUnavailable=0, maxSurge=1 in Helm values)
+#   2. Built-in health check gating via Argo CD health assessments
+#   3. Instant rollback via "helm rollback" or Argo CD UI/CLI
+#   4. No additional infrastructure (blue-green requires 2x resources)
+# Promotion criteria: All pods pass readiness probe + smoke test passes.
+# Rollback criteria: Any pod fails liveness probe 3 times OR smoke test fails.
+# =============================================================
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ssb-app-dev
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: ssb-app
+    env: dev
+  annotations:
+    # Notify the SRE team on sync failures.
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: ssb-deployments
+    notifications.argoproj.io/subscribe.on-health-degraded.slack: ssb-alerts
+  # Argo CD will clean up this Application when it is deleted.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: ssb-platform
+
+  source:
+    # Git repository containing the Helm chart.
+    repoURL: https://github.com/ssb-digital/ssb-app.git
+    # Track the main branch in dev. Pin to a tag in staging/prod.
+    targetRevision: main
+    path: helm/ssb-app
+    helm:
+      releaseName: ssb-app-dev
+      valueFiles:
+        - values.yaml
+        - values-dev.yaml
+      # Image tag injected at sync time by Argo CD Image Updater
+      # or by the CI pipeline via git commit.
+      parameters:
+        - name: image.tag
+          value: "REPLACED_BY_CI"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dev
+
+  syncPolicy:
+    automated:
+      # Auto-sync on Git change — dev only.
+      prune: true   # Remove orphaned resources.
+      selfHeal: true  # Revert manual changes (drift correction).
+      allowEmpty: false
+
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - RespectIgnoreDifferences=true
+      - ApplyOutOfSyncOnly=true
+
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  # Health checks — Argo CD waits for these before marking sync complete.
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas  # Managed by HPA; ignore drift.

@@ -1,0 +1,55 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ssb-app-staging
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: ssb-app
+    env: staging
+  annotations:
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: ssb-deployments
+    notifications.argoproj.io/subscribe.on-health-degraded.slack: ssb-alerts
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: ssb-platform
+
+  source:
+    repoURL: https://github.com/ssb-digital/ssb-app.git
+    # Staging tracks release branches — only promoted images deploy here.
+    targetRevision: HEAD
+    path: helm/ssb-app
+    helm:
+      releaseName: ssb-app-staging
+      valueFiles:
+        - values.yaml
+        - values-staging.yaml
+      parameters:
+        - name: image.tag
+          value: "REPLACED_BY_CI"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: staging
+
+  syncPolicy:
+    # Staging: manual sync — requires explicit trigger or Argo CD UI approval.
+    automated: null
+
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - RespectIgnoreDifferences=true
+
+    retry:
+      limit: 2
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
