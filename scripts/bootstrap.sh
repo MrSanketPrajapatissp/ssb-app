@@ -79,7 +79,7 @@ install_system_deps() {
   log_section "Step 1: System Dependencies"
   if command -v dnf &>/dev/null; then
     log_info "Installing git, curl, tar, jq via dnf..."
-    sudo dnf install -y git curl tar jq unzip dos2unix
+    sudo dnf install -y --allowerasing git tar jq unzip dos2unix || sudo dnf install -y git tar jq unzip dos2unix
   elif command -v apt-get &>/dev/null; then
     log_info "Installing git, curl, tar, jq via apt-get..."
     sudo apt-get update && sudo apt-get install -y git curl tar jq unzip dos2unix
