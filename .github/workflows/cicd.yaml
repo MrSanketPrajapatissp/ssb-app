@@ -258,7 +258,6 @@ jobs:
     name: "8 · Deploy to dev"
     runs-on: ubuntu-22.04
     needs: [build-push, helm-validate]
-    if: ${{ secrets.KUBECONFIG_DEV != '' }}
     environment:
       name: dev
       url: http://ssb-app.dev.local
@@ -278,6 +277,10 @@ jobs:
 
       - name: Configure kubeconfig (dev cluster)
         run: |
+          if [ -z "${{ secrets.KUBECONFIG_DEV }}" ]; then
+            echo "::notice::KUBECONFIG_DEV secret is not set in GitHub settings. Skipping live cluster deployment."
+            exit 0
+          fi
           mkdir -p ~/.kube
           echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > ~/.kube/config
           chmod 600 ~/.kube/config
@@ -312,13 +315,16 @@ jobs:
     name: "10 · Smoke Test (dev)"
     runs-on: ubuntu-22.04
     needs: [deploy-dev]
-    if: ${{ secrets.KUBECONFIG_DEV != '' }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4.1.7
 
       - name: Configure kubeconfig (dev cluster)
         run: |
+          if [ -z "${{ secrets.KUBECONFIG_DEV }}" ]; then
+            echo "::notice::KUBECONFIG_DEV secret is not set in GitHub settings. Skipping smoke test."
+            exit 0
+          fi
           mkdir -p ~/.kube
           echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > ~/.kube/config
           chmod 600 ~/.kube/config
@@ -390,6 +396,10 @@ jobs:
 
       - name: Configure kubeconfig (prod cluster)
         run: |
+          if [ -z "${{ secrets.KUBECONFIG_PROD }}" ]; then
+            echo "::notice::KUBECONFIG_PROD secret is not set in GitHub settings. Skipping production deployment."
+            exit 0
+          fi
           mkdir -p ~/.kube
           echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > ~/.kube/config
           chmod 600 ~/.kube/config
