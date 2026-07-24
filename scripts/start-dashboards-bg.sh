@@ -19,9 +19,11 @@ echo "[SUCCESS] Grafana Background Daemon started on Port 3000"
 nohup kubectl port-forward --address 0.0.0.0 svc/kube-prometheus-stack-prometheus -n monitoring 9090:9090 > /tmp/prometheus-pf.log 2>&1 &
 echo "[SUCCESS] Prometheus Background Daemon started on Port 9090"
 
+PUBLIC_IP=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || curl -s --max-time 3 checkip.amazonaws.com 2>/dev/null || echo "localhost")
+
 echo "══════════════════════════════════════════"
 echo "  Live Dashboard URLs:"
-echo "  - Grafana:    http://13.235.86.102:3000"
-echo "  - Prometheus: http://13.235.86.102:9090"
-echo "  - Go App:     http://13.235.86.102/health"
+echo "  - Grafana:    http://${PUBLIC_IP}:3000"
+echo "  - Prometheus: http://${PUBLIC_IP}:9090"
+echo "  - Go App:     http://${PUBLIC_IP}/health"
 echo "══════════════════════════════════════════"
