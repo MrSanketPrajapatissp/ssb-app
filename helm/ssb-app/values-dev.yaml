@@ -5,7 +5,7 @@ replicaCount: 1
 
 image:
   repository: localhost:5001/ssb-app
-  pullPolicy: Always
+  pullPolicy: IfNotPresent
   # Overridden by CI pipeline to the Git SHA tag.
   tag: "dev-latest"
 
